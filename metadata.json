@@ -1,0 +1,5 @@
+{
+  "name": "EditorAI - SEO & Proofreading Assistant",
+  "description": "A professional content analysis tool converting n8n automation into a React app. Features SEO generation and strict Vietnamese spell-checking using Google Gemini.",
+  "requestFramePermissions": []
+}
