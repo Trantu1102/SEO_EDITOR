@@ -1,3 +1,4 @@
+
 import { ArticleData } from "../types";
 
 // Helper function to normalize text for comparison
@@ -24,8 +25,6 @@ const isSimilar = (str1: string, str2: string): boolean => {
 const getSmartText = (node: Node): string => {
   if (node.nodeType === Node.TEXT_NODE) {
     const txt = node.textContent || "";
-    // Only return trim if it's standalone, but for mixed content we need to be careful.
-    // However, usually we traverse element by element.
     return txt;
   }
   
@@ -46,7 +45,6 @@ const getSmartText = (node: Node): string => {
 
     // Block elements should add spacing
     if (['p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'li', 'tr', 'blockquote', 'figcaption'].includes(tagName)) {
-      // Add newline only if text is not empty
       if (text.trim().length > 0) {
         return "\n" + text + "\n";
       }
@@ -73,7 +71,10 @@ export const scrapeArticle = async (url: string): Promise<ArticleData> => {
   const encodedUrl = encodeURIComponent(validUrl);
   const timestamp = new Date().getTime();
 
-  // Strategy: Robust Proxy Rotation (AllOrigins First)
+  // Strategy: Robust Proxy Rotation
+  // 1. AllOrigins (JSON mode): Most stable, wraps content in JSON to bypass CORS strictness.
+  // 2. CorsProxy.io: Direct HTML, fast but sometimes rate-limited.
+  // 3. CodeTabs: Reliable backup.
   const proxies = [
     {
       name: "AllOrigins",
@@ -81,32 +82,41 @@ export const scrapeArticle = async (url: string): Promise<ArticleData> => {
       isJson: true
     },
     {
-      name: "ThingProxy",
-      getUrl: () => `https://thingproxy.freeboard.io/fetch/${validUrl}`,
-      isJson: false
-    },
-    {
-      name: "CorsProxy",
+      name: "CorsProxy.io",
       getUrl: () => `https://corsproxy.io/?${encodedUrl}`,
       isJson: false
     },
     {
       name: "CodeTabs",
-      getUrl: () => `https://api.codetabs.com/v1/proxy?quest=${encodedUrl}`,
+      getUrl: () => `https://api.codetabs.com/v1/proxy?quest=${encodedUrl}&_=${timestamp}`,
+      isJson: false
+    },
+    {
+      name: "ThingProxy",
+      getUrl: () => `https://thingproxy.freeboard.io/fetch/${validUrl}`,
       isJson: false
     }
   ];
 
   let html = "";
+  let lastError = "";
+
   for (const proxy of proxies) {
     try {
+      console.log(`Attempting fetch via ${proxy.name}...`);
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
+      // Short timeout for each proxy to failover quickly
+      const timeoutId = setTimeout(() => controller.abort(), 20000); 
 
-      const response = await fetch(proxy.getUrl(), { signal: controller.signal });
+      const response = await fetch(proxy.getUrl(), { 
+        signal: controller.signal,
+        // Do NOT send custom headers as they trigger CORS Preflight failure on some proxies
+      });
       clearTimeout(timeoutId);
 
-      if (!response.ok) throw new Error(`Status ${response.status}`);
+      if (!response.ok) {
+          throw new Error(`Status ${response.status}`);
+      }
 
       if (proxy.isJson) {
         const data = await response.json();
@@ -115,14 +125,18 @@ export const scrapeArticle = async (url: string): Promise<ArticleData> => {
         html = await response.text();
       }
 
-      if (html && html.length > 500) break; 
-    } catch (error) {
-      console.warn(`Proxy ${proxy.name} failed. Moving to next.`);
+      if (html && html.length > 500) {
+          console.log(`Success via ${proxy.name}`);
+          break; 
+      }
+    } catch (error: any) {
+      console.warn(`Proxy ${proxy.name} failed:`, error.message);
+      lastError = error.message;
     }
   }
 
-  if (!html) {
-    throw new Error("Failed to fetch content. The website might be blocking access or the connection timed out.");
+  if (!html || html.length < 100) {
+    throw new Error(`Failed to fetch content. Public proxies might be busy or the site blocks them. Please paste content manually. (Debug: ${lastError})`);
   }
 
   const parser = new DOMParser();
@@ -132,7 +146,6 @@ export const scrapeArticle = async (url: string): Promise<ArticleData> => {
   const isTCCS = hostname.includes('tapchicongsan.org.vn');
 
   // --- 1. DOM CLEANING ---
-  // Aggressively remove known clutter using a whitelist/blacklist approach
   const clutterSelectors = [
     'script', 'style', 'nav', 'header', 'footer', 'iframe', 'noscript',
     '.ads', '.ad-container', '.banner', 
@@ -143,9 +156,7 @@ export const scrapeArticle = async (url: string): Promise<ArticleData> => {
     '.news-relate', '.article-relate', '.more-news', '.box-tin-khac',
     '.zone-relate', '.inner-article-relate', '.item-relate',
     '#related-news', '#zone_related_news', 
-    // NhanDan specific clutter
     '.box-tinlienquan', '.box-tinkhac', '.box-lq',
-    // VnExpress/Others
     '.box_tinkhac', '.list-news-related'
   ];
 
@@ -346,8 +357,6 @@ export const scrapeArticle = async (url: string): Promise<ArticleData> => {
 
   } else {
       // GENERAL LOGIC (NhanDan, VnExpress, etc.)
-      // Recursive to find P inside DIVs or other containers
-      
       const processGeneralNode = (node: Node) => {
          if (node.nodeType === Node.TEXT_NODE) return;
          
@@ -357,7 +366,7 @@ export const scrapeArticle = async (url: string): Promise<ArticleData> => {
             
             if (['script', 'style', 'noscript', 'iframe', 'svg', 'button', 'input', 'form'].includes(tagName)) return;
 
-             // Junk check (Skip this node and its children if junk)
+             // Junk check
              const text = el.textContent?.trim() || "";
              if (/^(tin|bài) (liên quan|cùng chủ đề|đọc thêm)/i.test(text) && text.length < 100) return;
 
@@ -375,23 +384,16 @@ export const scrapeArticle = async (url: string): Promise<ArticleData> => {
                 return;
             }
 
-            // Valid Text Blocks
-            // NOTE: For Nhan Dan, P tags might be deep inside generic DIVs.
             if (['p', 'h2', 'h3', 'h4', 'h5', 'li', 'blockquote', 'figcaption'].includes(tagName)) {
                  const cleanText = getSmartText(el).trim();
                  if (cleanText.length > 5) {
-                    // Dedupe
                     if (normTitle && normalize(cleanText).includes(normTitle) && cleanText.length < normTitle.length + 50) return;
                     if (normExcerpt && isSimilar(cleanText, excerpt)) return;
                     contentParts.push(cleanText);
                  }
-                 // Continue recursing? <p> shouldn't have nested block elements, but might have formatting spans.
-                 // getSmartText handles spans. So we don't need to recurse inside P for new blocks.
                  return;
             }
 
-            // Recurse for containers
-            // Added 'main' and generic tags to ensure we dive deep
             if (['div', 'section', 'article', 'main', 'ul', 'ol', 'table', 'tbody', 'tr', 'td', 'span', 'strong', 'b', 'em', 'i', 'body'].includes(tagName)) {
                 node.childNodes.forEach(child => processGeneralNode(child));
             }

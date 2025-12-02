@@ -88,6 +88,53 @@ const chunkTextHelper = (text: string, wordLimit: number = 1000): string[] => {
 };
 
 /**
+ * Post-processing to clean "False Positives" where the AI corrected a word to itself,
+ * or got confused by footnotes like (1), (2).
+ * 
+ * CRITICAL UPDATE: Normalizes Unicode (NFC) to handle Vietnamese accent differences.
+ */
+const cleanFalsePositives = (html: string): string => {
+  // Regex to find pattern: [original] <span ...>corrected</span>
+  const regex = /\[(.*?)\]\s*<span[^>]*>(.*?)<\/span>/g;
+
+  return html.replace(regex, (match, original, corrected) => {
+    // 1. UNICODE NORMALIZATION (The "Silver Bullet" for Vietnamese text)
+    // Converts both "o + ´" and "ó" to the same underlying character code.
+    const normOriginal = original.trim().normalize('NFC');
+    const normCorrected = corrected.trim().normalize('NFC');
+
+    // 2. EXACT MATCH CHECK
+    if (normOriginal === normCorrected) {
+      return original;
+    }
+
+    // 3. CITATION/FOOTNOTE CHECK
+    // Removes (1), [1], (12) from the end of the string for comparison
+    const removeCitations = (s: string) => s.replace(/[\(\[]\d+[\)\]]$/, '').trim();
+    
+    if (removeCitations(normOriginal) === removeCitations(normCorrected)) {
+       return original; 
+    }
+
+    // 4. IGNORE CASE DIFFERENCES FOR LIST ITEMS (Backup check)
+    // If words are identical ignoring case, and it's not a known proper noun issue, ignore.
+    if (normOriginal.toLowerCase() === normCorrected.toLowerCase()) {
+        // Just return original to be safe, unless it's specifically about capitalization rules
+        // For now, let's assume if content is identical letters, it's a false positive
+        // unless it matches specific "Nhà nước" type rules. 
+        // But since we have strict rules, we can trust the AI *mostly*, 
+        // but this catches "Ngành" vs "ngành" if the AI hallucinated the error tag.
+        
+        // However, we want to catch "nhà nước" -> "Nhà nước".
+        // So we only skip if the ORIGINAL was already capitalized correctly? 
+        // Let's rely on the Identity Check above.
+    }
+
+    return match; // Keep the correction if it passed checks
+  });
+};
+
+/**
  * Generates SEO content based on the n8n logic.
  */
 export const generateSeo = async (data: ArticleData, settings: UserSettings): Promise<SeoResult> => {
@@ -193,7 +240,7 @@ export const generateProofread = async (data: ArticleData, settings: UserSetting
           contents: prompt,
           config: {
             systemInstruction: settings.proofreadSystemInstruction,
-            temperature: 0.2, 
+            temperature: 0, // Set to 0 for maximum determinism to reduce hallucinations
           }
         });
 
@@ -212,6 +259,10 @@ export const generateProofread = async (data: ArticleData, settings: UserSetting
 
         let correctedText = response.text || "";
         correctedText = correctedText.replace(/output\s*/gi, '').trim();
+        
+        // --- APPLY FALSE POSITIVE FILTER ---
+        correctedText = cleanFalsePositives(correctedText);
+        
         processedChunks.push(correctedText);
       } catch (chunkError) {
         console.error(`Error processing chunk ${i}:`, chunkError);
