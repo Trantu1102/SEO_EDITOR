@@ -42,8 +42,10 @@ DƯỚI ĐÂY LÀ QUY TẮC CHI TIẾT:
 
    c) Phương hướng (Đông, Tây, Nam, Bắc):
       - VIẾT THƯỜNG: Khi chỉ hướng thuần túy (phía tây).
-      - VIẾT HOA: Khi hóa thân thành địa danh (miền Bắc, phương Tây).
-
+      - VIẾT HOA: Khi chỉ thành địa danh (miền Bắc, phương Tây).
+   d) "Chủ tịch nước" & "Tổng Bí thư" & "Thủ tướng Chính phủ"
+      - Viết đúng: "Chủ tịch nước" & "Tổng Bí thư" & "Thủ tướng Chính phủ"
+      
 3. NHÓM TỪ VỰNG & SẮP XẾP TỪ (BẮT BUỘC - Highlight ĐỎ):
    - Bắt buộc dùng: "bảo đảm" (thay cho "đảm bảo").
    - Âm "i": bác sĩ, chiến sĩ, kĩ sư.
